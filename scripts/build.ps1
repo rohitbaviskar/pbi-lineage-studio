@@ -87,6 +87,7 @@ if (!(Test-Path $csc)) { throw 'Could not find csc.exe. Install .NET Framework D
 
 $buildIcon = Join-Path ([System.IO.Path]::GetTempPath()) "PbiLineageStudio-$PID.ico"
 $versionSource = Join-Path ([System.IO.Path]::GetTempPath()) "PbiLineageStudio-Version-$PID.cs"
+$releaseNotesResource = "/resource:$releaseNotes,PbiLineageStudio.ReleaseNotes.md"
 try {
   $versionAttributes = @"
 [assembly: System.Reflection.AssemblyVersion("$assemblyVersion")]
@@ -97,7 +98,7 @@ try {
   [System.IO.File]::WriteAllText($versionSource, $versionAttributes, $utf8NoBom)
 
   New-AppIcon $buildIcon
-  & $csc /target:winexe /out:$out /win32icon:$buildIcon /optimize+ /resource:$releaseNotes,PbiLineageStudio.ReleaseNotes.md /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $source $versionSource
+  & $csc /target:winexe /out:$out /win32icon:$buildIcon /optimize+ $releaseNotesResource /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $source $versionSource
   if ($LASTEXITCODE -ne 0) { throw 'Could not build native Windows executable.' }
 }
 finally {
