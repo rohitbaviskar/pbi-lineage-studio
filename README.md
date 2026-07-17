@@ -7,8 +7,10 @@ PBI Lineage Studio is a standalone Windows application for exploring dependencie
 - Loads local `.SemanticModel` projects and TMDL table definitions.
 - Visualizes tables, columns, measures, relationships, partitions, and report usage.
 - Traces upstream and downstream dependencies.
+- Previews lineage paths on hover and supports progressively narrowed Ctrl+click highlights.
 - Provides data-flow and data-model views with search and inspection.
 - Exports the complete lineage canvas to PNG.
+- Shows embedded release notes and supports automatic or on-demand update checks.
 - Checks GitHub Releases for verified application updates.
 - Runs locally as a single Windows executable.
 
@@ -70,6 +72,7 @@ Restart Power BI Desktop after registration. The script writes the external-tool
 ```text
 native/PbiLineageStudio.cs                 Application source
 VERSION                                    Single application version source
+RELEASE_NOTES.md                           Release notes embedded in the executable
 scripts/build.ps1                          Reproducible Windows build
 scripts/prepare-release.ps1                Local version bump and release check
 scripts/register-powerbi-external-tool.ps1 Optional Power BI registration

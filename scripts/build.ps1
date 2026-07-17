@@ -4,9 +4,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $root 'native\PbiLineageStudio.cs'
 $versionFile = Join-Path $root 'VERSION'
+$releaseNotes = Join-Path $root 'RELEASE_NOTES.md'
 $out = Join-Path $root 'PBI Lineage Studio.exe'
 if (!(Test-Path $source)) { throw "Missing native source: $source" }
 if (!(Test-Path $versionFile)) { throw "Missing version file: $versionFile" }
+if (!(Test-Path $releaseNotes)) { throw "Missing release notes: $releaseNotes" }
 
 $version = (Get-Content $versionFile -Raw).Trim()
 if ($version -notmatch '^\d+(?:\.\d+){2,}$') {
@@ -95,7 +97,7 @@ try {
   [System.IO.File]::WriteAllText($versionSource, $versionAttributes, $utf8NoBom)
 
   New-AppIcon $buildIcon
-  & $csc /target:winexe /out:$out /win32icon:$buildIcon /optimize+ /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $source $versionSource
+  & $csc /target:winexe /out:$out /win32icon:$buildIcon /optimize+ /resource:$releaseNotes,PbiLineageStudio.ReleaseNotes.md /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $source $versionSource
   if ($LASTEXITCODE -ne 0) { throw 'Could not build native Windows executable.' }
 }
 finally {

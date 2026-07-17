@@ -11,6 +11,10 @@ obj/
 *.check.exe
 gitrun.txt
 
+# Local regression tests
+tests/
+scripts/test.ps1
+
 # Runtime and operating-system files
 *.log
 *.tmp

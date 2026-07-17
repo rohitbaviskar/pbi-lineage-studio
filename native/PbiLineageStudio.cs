@@ -471,6 +471,67 @@ namespace PbiLineageStudio {
     }
   }
 
+  public static class ReleaseNotes {
+    const string ResourceName = "PbiLineageStudio.ReleaseNotes.md";
+
+    public static string Content() {
+      using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName)) {
+        if (stream == null) return "Release notes are unavailable in this build.";
+        using (var reader = new StreamReader(stream, Encoding.UTF8)) return reader.ReadToEnd();
+      }
+    }
+
+    public static string DisplayText() {
+      var text = Regex.Replace(Content(), @"(?m)^#{1,6}\s*", "");
+      return text.Replace("**", "").Trim();
+    }
+  }
+
+  public class ReleaseNotesDialog : Form {
+    public ReleaseNotesDialog() {
+      Text = "What's new - PBI Lineage Studio";
+      Icon = Branding.CreateAppIcon();
+      StartPosition = FormStartPosition.CenterParent;
+      Size = new Size(760, 640);
+      MinimumSize = new Size(560, 440);
+      Font = new Font("Segoe UI", 9F);
+      BackColor = Theme.Surface;
+
+      var layout = new TableLayoutPanel();
+      layout.Dock = DockStyle.Fill;
+      layout.ColumnCount = 1;
+      layout.RowCount = 2;
+      layout.Padding = new Padding(22, 18, 22, 14);
+      layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+      layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+      Controls.Add(layout);
+
+      var notes = new RichTextBox();
+      notes.Dock = DockStyle.Fill;
+      notes.ReadOnly = true;
+      notes.BorderStyle = BorderStyle.None;
+      notes.BackColor = Theme.Surface;
+      notes.ForeColor = Theme.Ink;
+      notes.Font = new Font("Segoe UI", 10F);
+      notes.DetectUrls = true;
+      notes.Text = ReleaseNotes.DisplayText();
+      layout.Controls.Add(notes, 0, 0);
+
+      var footer = new FlowLayoutPanel();
+      footer.Dock = DockStyle.Fill;
+      footer.FlowDirection = FlowDirection.RightToLeft;
+      footer.Padding = new Padding(0, 8, 0, 0);
+      var close = new PremiumButton();
+      close.Text = "Close";
+      close.Size = new Size(92, 34);
+      close.DialogResult = DialogResult.OK;
+      footer.Controls.Add(close);
+      layout.Controls.Add(footer, 0, 1);
+      AcceptButton = close;
+      CancelButton = close;
+    }
+  }
+
   public class MainForm : Form {
     const string UpdateManifestUrl = "https://github.com/rohitbaviskar/pbi-lineage-studio/releases/latest/download/latest.json";
     readonly CueTextBox folderText = new CueTextBox();
@@ -510,11 +571,13 @@ namespace PbiLineageStudio {
     readonly Label sidebarHeaderLabel = new Label();
     readonly ToolTip paneToolTip = new ToolTip();
     readonly ToolStripMenuItem updateMenuItem = new ToolStripMenuItem();
+    readonly ToolStripMenuItem checkForUpdatesMenuItem = new ToolStripMenuItem();
     int layoutTabCount = 1;
     int previousDetailsHeight = 230;
     int previousSidebarWidth = 240;
     bool detailsCollapsed;
     bool sidebarCollapsed;
+    bool updateCheckRunning;
     bool updateInstalling;
     UpdateManifest availableUpdate;
     Graph graph = new Graph();
@@ -561,7 +624,14 @@ namespace PbiLineageStudio {
       var aboutMenu = new ToolStripMenuItem("&About");
       var aboutMenuItem = new ToolStripMenuItem("About PBI Lineage Studio");
       aboutMenuItem.Click += delegate { ShowAbout(); };
+      var whatsNewMenuItem = new ToolStripMenuItem("What's new");
+      whatsNewMenuItem.Click += delegate { ShowWhatsNew(); };
+      checkForUpdatesMenuItem.Text = "Check for updates";
+      checkForUpdatesMenuItem.Click += delegate { CheckForUpdatesAsync(true); };
       aboutMenu.DropDownItems.Add(aboutMenuItem);
+      aboutMenu.DropDownItems.Add(whatsNewMenuItem);
+      aboutMenu.DropDownItems.Add(new ToolStripSeparator());
+      aboutMenu.DropDownItems.Add(checkForUpdatesMenuItem);
       updateMenuItem.Alignment = ToolStripItemAlignment.Right;
       updateMenuItem.Text = "Update available";
       updateMenuItem.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
@@ -819,7 +889,7 @@ namespace PbiLineageStudio {
           folderText.Text = StartupFolder;
           LoadFolder(StartupFolder);
         }
-        CheckForUpdatesAsync();
+        CheckForUpdatesAsync(false);
       };
     }
 
@@ -833,6 +903,7 @@ namespace PbiLineageStudio {
     }
 
     void SetFlowFilter(string filter) {
+      canvas.ClearHighlights();
       if (filter == "all") {
         canvas.ShowSources = true;
         canvas.ShowTables = true;
@@ -845,6 +916,7 @@ namespace PbiLineageStudio {
     }
 
     void ToggleFlowFilter(string filter) {
+      canvas.ClearHighlights();
       if (filter == "source") canvas.ShowSources = !canvas.ShowSources;
       if (filter == "table") canvas.ShowTables = !canvas.ShowTables;
       if (filter == "column") canvas.ShowColumns = !canvas.ShowColumns;
@@ -1015,6 +1087,7 @@ namespace PbiLineageStudio {
     }
 
     void SetViewMode(string mode) {
+      canvas.ClearHighlights();
       canvas.ViewMode = mode;
       dataFlowButton.BackColor = mode == "dataflow" ? Theme.PrimarySoft : Theme.Surface;
       dataFlowButton.ForeColor = mode == "dataflow" ? Theme.Primary : Theme.Muted;
@@ -1035,24 +1108,53 @@ namespace PbiLineageStudio {
       else RenderDetails(graph.NodeById(canvas.SelectedId));
     }
 
-    async void CheckForUpdatesAsync() {
+    async void CheckForUpdatesAsync(bool interactive) {
+      if (updateCheckRunning) {
+        if (interactive) MessageBox.Show(this, "An update check is already in progress.", "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        return;
+      }
+      updateCheckRunning = true;
+      if (interactive) {
+        checkForUpdatesMenuItem.Enabled = false;
+        checkForUpdatesMenuItem.Text = "Checking for updates...";
+        Cursor = Cursors.WaitCursor;
+      }
       try {
         ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
         string json;
         using (var client = new UpdateWebClient()) json = await client.DownloadStringTaskAsync(new Uri(UpdateManifestUrl));
-        if (String.IsNullOrWhiteSpace(json) || json.Length > 65536) return;
+        if (String.IsNullOrWhiteSpace(json) || json.Length > 65536) throw new InvalidDataException("The update manifest was empty or too large.");
 
         var manifest = new JavaScriptSerializer().Deserialize<UpdateManifest>(json);
-        if (!ValidManifest(manifest)) return;
+        if (!ValidManifest(manifest)) throw new InvalidDataException("The update manifest was invalid.");
 
-        if (CompareApplicationVersions(manifest.version, CurrentApplicationVersion()) <= 0) return;
+        if (CompareApplicationVersions(manifest.version, CurrentApplicationVersion()) <= 0) {
+          if (interactive) MessageBox.Show(this,
+            "PBI Lineage Studio " + CurrentApplicationVersion() + " is up to date.",
+            "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
         if (IsDisposed || !IsHandleCreated) return;
 
         availableUpdate = manifest;
         updateMenuItem.Text = "Update available  " + manifest.version;
         updateMenuItem.Visible = true;
-      } catch {
-        // Update checks never interrupt normal startup or offline use.
+        if (interactive) MessageBox.Show(this,
+          "PBI Lineage Studio " + manifest.version + " is available." + Environment.NewLine + Environment.NewLine +
+          "Select the highlighted Update available button in the menu bar to download and install it.",
+          "Update available", MessageBoxButtons.OK, MessageBoxIcon.Information);
+      } catch (Exception ex) {
+        if (interactive) MessageBox.Show(this,
+          "PBI Lineage Studio could not check for updates." + Environment.NewLine + Environment.NewLine + ex.Message,
+          "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        // Automatic startup checks remain silent when offline.
+      } finally {
+        updateCheckRunning = false;
+        if (interactive && !IsDisposed) {
+          checkForUpdatesMenuItem.Enabled = true;
+          checkForUpdatesMenuItem.Text = "Check for updates";
+          Cursor = Cursors.Default;
+        }
       }
     }
 
@@ -1168,6 +1270,10 @@ namespace PbiLineageStudio {
         "Version " + CurrentApplicationVersion() + Environment.NewLine + Environment.NewLine +
         "Local Power BI semantic model lineage viewer.",
         "About PBI Lineage Studio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    void ShowWhatsNew() {
+      using (var dialog = new ReleaseNotesDialog()) dialog.ShowDialog(this);
     }
 
     void ExportPng() {
@@ -1367,6 +1473,7 @@ namespace PbiLineageStudio {
     }
 
     void SelectObjectById(string id) {
+      canvas.ClearHighlights();
       var node = graph.NodeById(id);
       if (node == null) {
         tableBrowser.SelectedId = null;
@@ -1388,6 +1495,7 @@ namespace PbiLineageStudio {
 
     void SelectRelationship(Edge edge) {
       if (edge == null) return;
+      canvas.ClearHighlights();
       canvas.SelectedId = null;
       canvas.SelectedRelationship = edge;
       tableBrowser.SelectedId = null;
@@ -1784,6 +1892,50 @@ namespace PbiLineageStudio {
     public bool IsCollapsed;
   }
 
+  public class LineageHighlightState {
+    readonly List<string> anchors = new List<string>();
+    readonly HashSet<string> nodeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsActive { get { return anchors.Count > 0 && nodeIds.Count > 0; } }
+    public bool Contains(string id) { return !String.IsNullOrEmpty(id) && nodeIds.Contains(id); }
+    public HashSet<string> NodeIds { get { return new HashSet<string>(nodeIds, StringComparer.OrdinalIgnoreCase); } }
+
+    public void Clear() {
+      anchors.Clear();
+      nodeIds.Clear();
+    }
+
+    public bool AddAnchor(Graph graph, string id, HashSet<string> visible) {
+      if (graph == null || String.IsNullOrEmpty(id) || visible == null || !visible.Contains(id)) {
+        Clear();
+        return false;
+      }
+      if (IsActive && !nodeIds.Contains(id)) {
+        Clear();
+        return false;
+      }
+      var closure = LineageClosure(graph, id, visible);
+      if (!IsActive) {
+        anchors.Add(id);
+        nodeIds.UnionWith(closure);
+      } else {
+        anchors.Add(id);
+        nodeIds.IntersectWith(closure);
+      }
+      if (nodeIds.Count == 0) Clear();
+      return IsActive;
+    }
+
+    public static HashSet<string> LineageClosure(Graph graph, string id, HashSet<string> visible) {
+      var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+      if (graph == null || String.IsNullOrEmpty(id) || visible == null || !visible.Contains(id)) return result;
+      result.Add(id);
+      foreach (var upstream in graph.Upstream(id, false)) if (visible.Contains(upstream)) result.Add(upstream);
+      foreach (var downstream in graph.Downstream(id, false)) if (visible.Contains(downstream)) result.Add(downstream);
+      return result;
+    }
+  }
+
   public class LineageCanvas : Panel {
     public Graph Graph = new Graph();
     public string SelectedId;
@@ -1804,6 +1956,7 @@ namespace PbiLineageStudio {
     readonly List<RelationshipHit> relationshipHits = new List<RelationshipHit>();
     readonly List<RelationshipOverlay> relationshipOverlays = new List<RelationshipOverlay>();
     readonly ToolTip nodeToolTip = new ToolTip();
+    readonly LineageHighlightState highlightState = new LineageHighlightState();
     string hoverNodeId;
     string dragNodeId;
     Point dragOffset;
@@ -1820,6 +1973,13 @@ namespace PbiLineageStudio {
       nodeToolTip.AutoPopDelay = 8000;
     }
 
+    public void ClearHighlights() {
+      highlightState.Clear();
+      hoverNodeId = null;
+      nodeToolTip.SetToolTip(this, "");
+      Invalidate();
+    }
+
     public void EnsureLayoutPage(string name, bool isAllTablesPage) {
       var state = PageState(name);
       state.IsAllTablesPage = isAllTablesPage;
@@ -1832,6 +1992,7 @@ namespace PbiLineageStudio {
       if (String.Equals(LayoutPage, name, StringComparison.OrdinalIgnoreCase)) LayoutPage = "All tables";
       SelectedId = null;
       SelectedRelationship = null;
+      ClearHighlights();
       Invalidate();
     }
 
@@ -1842,6 +2003,7 @@ namespace PbiLineageStudio {
       SelectedRelationship = null;
       pageStates.Clear();
       flowPositions.Clear();
+      ClearHighlights();
       Invalidate();
     }
 
@@ -2018,11 +2180,13 @@ namespace PbiLineageStudio {
       hoverNodeId = nextId;
       var node = String.IsNullOrEmpty(nextId) ? null : Graph.NodeById(nextId);
       nodeToolTip.SetToolTip(this, node == null ? "" : node.Display);
+      Invalidate();
     }
 
     protected override void OnMouseLeave(EventArgs e) {
       hoverNodeId = null;
       nodeToolTip.SetToolTip(this, "");
+      Invalidate();
       base.OnMouseLeave(e);
     }
 
@@ -2040,9 +2204,19 @@ namespace PbiLineageStudio {
         base.OnMouseClick(e);
         return;
       }
+      var controlHighlight = ViewMode == "dataflow" && (ModifierKeys & Keys.Control) == Keys.Control;
       var point = ToLogicalPoint(e.Location);
       foreach (var pair in positions) {
         if (pair.Value.Contains(point)) {
+          if (controlHighlight) {
+            highlightState.AddAnchor(Graph, pair.Key, VisibleNodeIds());
+            hoverNodeId = null;
+            nodeToolTip.SetToolTip(this, "");
+            Invalidate();
+            base.OnMouseClick(e);
+            return;
+          }
+          ClearHighlights();
           if (ViewMode == "datamodel" && RemoveTableButtonRect(pair.Value).Contains(point)) {
             RemoveTableFromCurrentPage(pair.Key);
             SelectedId = null;
@@ -2068,6 +2242,12 @@ namespace PbiLineageStudio {
           return;
         }
       }
+      if (controlHighlight) {
+        ClearHighlights();
+        base.OnMouseClick(e);
+        return;
+      }
+      ClearHighlights();
       if (ViewMode == "datamodel") {
         foreach (var hit in relationshipHits) {
           if (DistanceToPolyline(point, hit.Points) <= 7) {
@@ -2371,6 +2551,8 @@ namespace PbiLineageStudio {
 
     void DrawEdges(Graphics g) {
       var visible = VisibleNodeIds();
+      var highlighted = ActiveHighlightNodeIds(visible);
+      var hasHighlight = highlighted != null && highlighted.Count > 0;
       using (var pen = new Pen(Color.FromArgb(148, 163, 184), 1.6F)) {
         if (ViewMode == "datamodel") {
           DrawDataModelEdges(g, pen);
@@ -2382,7 +2564,14 @@ namespace PbiLineageStudio {
           var b = positions[pair.To];
           var start = new Point(a.Right, a.Top + a.Height / 2);
           var end = new Point(b.Left, b.Top + b.Height / 2);
-          if (SelectedId != null) {
+          var edgeHighlighted = hasHighlight && highlighted.Contains(pair.From) && highlighted.Contains(pair.To);
+          if (edgeHighlighted) {
+            pen.Color = Theme.Amber;
+            pen.Width = 3.2F;
+          } else if (hasHighlight) {
+            pen.Color = Color.FromArgb(48, 148, 163, 184);
+            pen.Width = 1.2F;
+          } else if (SelectedId != null) {
             pen.Color = Theme.Amber;
             pen.Width = 3F;
           } else {
@@ -2393,6 +2582,20 @@ namespace PbiLineageStudio {
           DrawArrow(g, pen.Color, start, end);
         }
       }
+    }
+
+    HashSet<string> ActiveHighlightNodeIds(HashSet<string> visible) {
+      if (ViewMode != "dataflow" || visible == null) return null;
+      if (highlightState.IsActive) {
+        var pinned = highlightState.NodeIds;
+        pinned.IntersectWith(visible);
+        if (!String.IsNullOrEmpty(hoverNodeId) && pinned.Contains(hoverNodeId)) {
+          pinned.IntersectWith(LineageHighlightState.LineageClosure(Graph, hoverNodeId, visible));
+        }
+        return pinned;
+      }
+      if (!String.IsNullOrEmpty(hoverNodeId)) return LineageHighlightState.LineageClosure(Graph, hoverNodeId, visible);
+      return null;
     }
 
     List<VisibleEdge> DataFlowVisibleEdges(HashSet<string> visible) {
@@ -2657,23 +2860,27 @@ namespace PbiLineageStudio {
         return;
       }
       var visible = VisibleNodeIds();
+      var highlighted = ActiveHighlightNodeIds(visible);
+      var hasHighlight = highlighted != null && highlighted.Count > 0;
       foreach (var node in Graph.Nodes.Where(n => visible.Contains(n.Id))) {
         if (!positions.ContainsKey(node.Id)) continue;
         var r = positions[node.Id];
         var selected = node.Id == SelectedId;
+        var onHighlightedPath = hasHighlight && highlighted.Contains(node.Id);
+        var dimmed = hasHighlight && !onHighlightedPath;
         var card = new RectangleF(r.Left, r.Top, r.Width, r.Height);
         using (var shadowPath = Theme.RoundRect(new RectangleF(r.Left + 2, r.Top + 5, r.Width, r.Height), 10F))
-        using (var shadow = new SolidBrush(Color.FromArgb(24, 15, 23, 42))) g.FillPath(shadow, shadowPath);
+        using (var shadow = new SolidBrush(Color.FromArgb(dimmed ? 7 : 24, 15, 23, 42))) g.FillPath(shadow, shadowPath);
         using (var path = Theme.RoundRect(card, 10F))
-        using (var brush = new SolidBrush(NodeColor(node.Type)))
-        using (var pen = new Pen(selected ? Theme.Amber : Color.FromArgb(55, 255, 255, 255), selected ? 3F : 1F)) {
+        using (var brush = new SolidBrush(dimmed ? Color.FromArgb(58, NodeColor(node.Type)) : NodeColor(node.Type)))
+        using (var pen = new Pen(onHighlightedPath || (!hasHighlight && selected) ? Theme.Amber : Color.FromArgb(dimmed ? 24 : 55, 255, 255, 255), onHighlightedPath || (!hasHighlight && selected) ? 3F : 1F)) {
           g.FillPath(brush, path);
           g.DrawPath(pen, path);
         }
-        using (var brush = new SolidBrush(Color.White)) {
+        using (var brush = new SolidBrush(Color.FromArgb(dimmed ? 82 : 255, 255, 255, 255))) {
           using (var titleFont = new Font("Segoe UI Semibold", 9F, FontStyle.Bold))
           using (var typeFont = new Font("Segoe UI", 7.5F, FontStyle.Bold))
-          using (var softBrush = new SolidBrush(Color.FromArgb(205, 255, 255, 255)))
+          using (var softBrush = new SolidBrush(Color.FromArgb(dimmed ? 60 : 205, 255, 255, 255)))
           using (var format = new StringFormat()) {
             format.Trimming = StringTrimming.EllipsisCharacter;
             format.FormatFlags = StringFormatFlags.LineLimit;
@@ -3069,13 +3276,27 @@ namespace PbiLineageStudio {
             if (!result.Any(r => r.Table.Equals(table, StringComparison.OrdinalIgnoreCase) && r.Measure.Equals(property, StringComparison.OrdinalIgnoreCase))) result.Add(new ReportMeasureRef { Table = table, Measure = property });
           }
         }
-        foreach (var item in dictionary.Values) CollectMeasures(item, aliases, result, depth + 1);
+        foreach (var item in dictionary) {
+          // Power BI can retain a visual's former field as its default sort after the
+          // projected value changes. That metadata does not represent page usage.
+          if (item.Key.Equals("sortDefinition", StringComparison.OrdinalIgnoreCase) && IsDefaultSortDefinition(item.Value)) continue;
+          CollectMeasures(item.Value, aliases, result, depth + 1);
+        }
         return;
       }
       var text = value as string;
       object nested;
       if (TryDeserializeNested(text, out nested)) CollectMeasures(nested, aliases, result, depth + 1);
       else if (!(value is string)) foreach (var item in AsEnumerable(value)) CollectMeasures(item, aliases, result, depth + 1);
+    }
+
+    static bool IsDefaultSortDefinition(object value) {
+      var sort = AsDictionary(value);
+      if (sort == null) return false;
+      var raw = Get(sort, "isDefaultSort");
+      if (raw is bool) return (bool)raw;
+      bool parsed;
+      return Boolean.TryParse(StringValue(raw), out parsed) && parsed;
     }
 
     static string ResolveSourceTable(object expression, Dictionary<string, string> aliases) {
