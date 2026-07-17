@@ -1,0 +1,25 @@
+# Local tooling
+.agents/
+.codex/
+.idea/
+.vscode/
+
+# Build and debug output
+bin/
+obj/
+*.pdb
+*.check.exe
+gitrun.txt
+
+# Runtime and operating-system files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem

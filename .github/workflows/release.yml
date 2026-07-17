@@ -1,0 +1,79 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Validate version tag
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+
+          if ($version -notmatch '^\d+(?:\.\d+){2,}$') {
+            throw "The tag must look like v0.2.4, v0.2.4.1, or v0.2.4.1.1"
+          }
+
+          $sourceVersion = (Get-Content "VERSION" -Raw).Trim()
+          if ($sourceVersion -ne $version) {
+            throw "Tag v$version does not match VERSION ($sourceVersion). Run prepare-release.ps1 first."
+          }
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          & ".\scripts\build.ps1"
+
+      - name: Prepare release files
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+          $repository = $env:GITHUB_REPOSITORY
+          $asset = "PBI-Lineage-Studio.exe"
+
+          Copy-Item "PBI Lineage Studio.exe" $asset
+
+          $hash = (
+            Get-FileHash $asset -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+
+          $manifest = [ordered]@{
+            version = $version
+            downloadUrl = "https://github.com/$repository/releases/download/$tag/$asset"
+            sha256 = $hash
+            releaseNotesUrl = "https://github.com/$repository/releases/tag/$tag"
+          } | ConvertTo-Json
+
+          [System.IO.File]::WriteAllText(
+            (Join-Path $PWD "latest.json"),
+            $manifest,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+
+          gh release create $tag `
+            "PBI-Lineage-Studio.exe" `
+            "latest.json" `
+            --verify-tag `
+            --title "PBI Lineage Studio $version" `
+            --generate-notes `
+            --latest
